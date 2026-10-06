@@ -1,0 +1,98 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      # Option A: a code-signing certificate (.pfx), base64-encoded.
+      HAS_PFX: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+      # Option B: Azure Trusted Signing.
+      HAS_TRUSTED_SIGNING: ${{ secrets.AZURE_CLIENT_ID != '' && vars.TRUSTED_SIGNING_ACCOUNT != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Work out version
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}".TrimStart('v') } else { $v = "1.0.0" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Publish single-file exe
+        run: >
+          dotnet publish src/WatchSentence/WatchSentence.csproj -c Release -r win-x64
+          -p:Version=${{ steps.ver.outputs.version }} -o out
+
+      - name: Sign with certificate (.pfx)
+        if: env.HAS_PFX == 'true'
+        shell: pwsh
+        env:
+          CERT_B64: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Watch Sentence" out\WatchSentence.exe
+          if ($LASTEXITCODE -ne 0) { throw "signing failed" }
+          Remove-Item $pfx
+
+      - name: Sign with Azure Trusted Signing
+        if: env.HAS_TRUSTED_SIGNING == 'true'
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.TRUSTED_SIGNING_PROFILE }}
+          files-folder: out
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Report signature
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature out\WatchSentence.exe
+          Write-Host "Signature status: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -eq 'Valid') { "SIGNED=true" >> $env:GITHUB_ENV } else { "SIGNED=false" >> $env:GITHUB_ENV }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item out\WatchSentence.exe dist\WatchSentence.exe
+          Compress-Archive -Path out\WatchSentence.exe, README.md -DestinationPath dist\WatchSentence-${{ steps.ver.outputs.version }}-win-x64.zip
+          Get-FileHash dist\* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content dist\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WatchSentence-win-x64
+          path: dist/*
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Windows 10/11 (x64)용 단일 실행 파일입니다. 설치 없이 `WatchSentence.exe`를 실행하세요.
+            ${{ env.SIGNED == 'true' && '코드 서명된 빌드입니다.' || '⚠️ 이 빌드는 아직 코드 서명이 되어 있지 않습니다. 처음 실행할 때 SmartScreen 경고가 뜨면 "추가 정보 → 실행"을 누르세요.' }}
