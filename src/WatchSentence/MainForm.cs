@@ -227,7 +227,7 @@ public sealed class MainForm : Form
             ? now.ToString("dddd", CultureInfo.GetCultureInfo("ko-KR"))
             : now.ToString("dddd", CultureInfo.InvariantCulture);
         string date = $"{now:yyyy-MM-dd} {weekday}";
-        using var dateFont = new Font("Segoe UI", Math.Max(9f, bigSize * 0.26f), FontStyle.Regular, GraphicsUnit.Pixel);
+        using var dateFont = new Font(_settings.KoreanWeekday ? "Malgun Gothic" : "Segoe UI", Math.Max(9f, bigSize * 0.26f), FontStyle.Regular, GraphicsUnit.Pixel);
         float dateY = y + hmSize.Height + bigSize * 0.02f;
         g.DrawString(date, dateFont, mutedBrush, x + bigSize * 0.03f, dateY, fmt);
         float dateBottom = dateY + g.MeasureString(date, dateFont, PointF.Empty, fmt).Height;
