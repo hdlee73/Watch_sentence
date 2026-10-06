@@ -49,7 +49,7 @@ python3 tools/build_quotes.py <gutenberg-txt-폴더> src/WatchSentence/quotes.ts
 dotnet publish src/WatchSentence/WatchSentence.csproj -c Release -r win-x64 -o out
 ```
 
-`v*` 태그를 push하면 GitHub Actions가 빌드하고, 서명하고, Release에 올립니다.
+`v*` 태그를 push하거나, Actions 탭에서 "Build and release" 워크플로를 `release_version`(예: 1.0.1)과 함께 수동 실행하면 빌드 → 서명 → Release 게시가 진행됩니다.
 
 ## 코드 서명
 
